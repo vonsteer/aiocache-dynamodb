@@ -53,6 +53,7 @@ class DynamoDBCache(BaseCache):
         self.value_column = value_column
         self.ttl_column = ttl_column
         self._session = get_session()
+        self._dynamodb_client: DynamoDBClient
 
     @classmethod
     def _value_casting(
@@ -105,6 +106,18 @@ class DynamoDBCache(BaseCache):
                 f"Failed to create DynamoDB client: {e}",
             ) from e
 
+    @property
+    async def client(self) -> "DynamoDBClient":
+        """Returns the DynamoDB client."""
+        if not getattr(self, "_dynamodb_client", None):
+            self._dynamodb_client = await self._get_client()
+            with self.handle_exceptions():
+                await self._dynamodb_client.describe_table(
+                    TableName=self.table_name,
+                )
+            self._client_initialised = True
+        return self._dynamodb_client
+
     async def __aenter__(self) -> "DynamoDBCache":
         """Enters the context manager and initializes the DynamoDB client.
 
@@ -112,11 +125,7 @@ class DynamoDBCache(BaseCache):
         :raises ClientCreationError: If the client cannot be created.
         :raises TableNotFoundError: If the table does not exist.
         """
-        self._dynamodb_client = await self._get_client()
-        with self.handle_exceptions():
-            await self._dynamodb_client.describe_table(
-                TableName=self.table_name,
-            )
+        await self.client
         return await super().__aenter__()
 
     async def _close(self, _conn: None = None) -> None:
@@ -142,11 +151,12 @@ class DynamoDBCache(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: The value of the item.
         """
+        dynamodb_client = await self.client
         current_time = int(datetime.now(tz=timezone.utc).timestamp())
         # We need to this overly complex query as items with ttl
         # are only deleted within 48hrs of the expiration time.
         with self.handle_exceptions():
-            response = await self._dynamodb_client.query(
+            response = await dynamodb_client.query(
                 Limit=1,
                 TableName=self.table_name,
                 KeyConditionExpression="#pk = :key",
@@ -220,9 +230,10 @@ class DynamoDBCache(BaseCache):
         :param _conn: The connection to use.  (Not used)
         :return: The values of the items.
         """
+        dynamodb_client = await self.client
         results = []
         with self.handle_exceptions():
-            response = await self._dynamodb_client.batch_get_item(
+            response = await dynamodb_client.batch_get_item(
                 RequestItems={
                     self.table_name: {
                         "Keys": [self._build_get_input(key) for key in keys],
@@ -238,7 +249,7 @@ class DynamoDBCache(BaseCache):
                 attempts += 1
                 await asyncio.sleep(attempts)
                 with self.handle_exceptions():
-                    response = await self._dynamodb_client.batch_get_item(
+                    response = await dynamodb_client.batch_get_item(
                         RequestItems=unprocessed_keys,
                     )
                 if items := response["Responses"].get(self.table_name):
@@ -268,8 +279,9 @@ class DynamoDBCache(BaseCache):
         :param _conn: The connection to use.  (Not used)
         :return: None
         """
+        dynamodb_client = await self.client
         with self.handle_exceptions():
-            await self._dynamodb_client.put_item(
+            await dynamodb_client.put_item(
                 TableName=self.table_name,
                 Item=self._build_set_input(key, value, ttl),
             )
@@ -290,8 +302,9 @@ class DynamoDBCache(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: None.
         """
+        dynamodb_client = await self.client
         try:
-            await self._dynamodb_client.put_item(
+            await dynamodb_client.put_item(
                 TableName=self.table_name,
                 Item=self._build_set_input(key, value, ttl),
                 ConditionExpression=f"attribute_not_exists({self.key_column})",
@@ -371,6 +384,7 @@ class DynamoDBCache(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: None
         """
+        dynamodb_client = await self.client
         payload: BatchWriteItemInputTypeDef = {
             "RequestItems": {
                 self.table_name: [
@@ -388,7 +402,7 @@ class DynamoDBCache(BaseCache):
             },
         }
         with self.handle_exceptions():
-            await self._dynamodb_client.batch_write_item(**payload)
+            await dynamodb_client.batch_write_item(**payload)
 
     async def _multi_delete(
         self,
@@ -408,6 +422,7 @@ class DynamoDBCache(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: None.
         """
+        dynamodb_client = await self.client
         payload: BatchWriteItemInputTypeDef = {
             "RequestItems": {
                 self.table_name: [
@@ -425,7 +440,7 @@ class DynamoDBCache(BaseCache):
             },
         }
         with self.handle_exceptions():
-            await self._dynamodb_client.batch_write_item(**payload)
+            await dynamodb_client.batch_write_item(**payload)
 
     async def _delete(self, key: str, _conn: None = None) -> None:
         """Deletes an item from the DynamoDB table.
@@ -434,8 +449,9 @@ class DynamoDBCache(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: None.
         """
+        dynamodb_client = await self.client
         with self.handle_exceptions():
-            await self._dynamodb_client.delete_item(
+            await dynamodb_client.delete_item(
                 TableName=self.table_name,
                 Key=self._build_get_input(key),
             )
@@ -452,6 +468,7 @@ class DynamoDBCache(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: None
         """
+        dynamodb_client = await self.client
         additional_payload = {
             "ProjectionExpression": self.key_column,
             "Limit": 25,
@@ -463,7 +480,7 @@ class DynamoDBCache(BaseCache):
                     "ExpressionAttributeValues": {":namespace": {"S": namespace}},
                 },
             )
-        response = await self._dynamodb_client.scan(
+        response = await dynamodb_client.scan(
             TableName=self.table_name,
             **additional_payload,
         )
@@ -471,7 +488,7 @@ class DynamoDBCache(BaseCache):
             await self._multi_delete(items)
         if last_evaluated_key := response.get("LastEvaluatedKey"):
             while last_evaluated_key:
-                response = await self._dynamodb_client.scan(
+                response = await dynamodb_client.scan(
                     TableName=self.table_name,
                     ExclusiveStartKey=last_evaluated_key,
                     **additional_payload,
@@ -491,7 +508,8 @@ class DynamoDBCache(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: True if the item exists, False otherwise.
         """
-        response = await self._dynamodb_client.get_item(
+        dynamodb_client = await self.client
+        response = await dynamodb_client.get_item(
             TableName=self.table_name,
             Key=self._build_get_input(key),
         )
@@ -509,7 +527,8 @@ class DynamoDBCache(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: The new value of the item.
         """
-        response = await self._dynamodb_client.update_item(
+        dynamodb_client = await self.client
+        response = await dynamodb_client.update_item(
             TableName=self.table_name,
             Key=self._build_get_input(key),
             UpdateExpression="SET #val = #val + :delta",
@@ -538,6 +557,7 @@ class DynamoDBCache(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: None
         """
+        dynamodb_client = await self.client
         payload: UpdateItemInputTypeDef = {
             "TableName": self.table_name,
             "Key": self._build_get_input(key),
@@ -551,7 +571,7 @@ class DynamoDBCache(BaseCache):
                 ":ttl": {"N": str(self._build_ttl(ttl))},
             }
 
-        await self._dynamodb_client.update_item(
+        await dynamodb_client.update_item(
             **payload,
         )
 
