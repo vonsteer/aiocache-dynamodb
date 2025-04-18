@@ -1,0 +1,5 @@
+DEFAULT_REGION = "us-east-1"
+
+DEFAULT_KEY_COLUMN = "cache_key"
+DEFAULT_VALUE_COLUMN = "cache_value"
+DEFAULT_TTL_COLUMN = "ttl"
