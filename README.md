@@ -68,14 +68,18 @@ asyncio.run(main())
 ## Configuration
 The `DynamoDBCache` class supports the following parameters:
 
-- `table_name`: Name of the DynamoDB table.
+- `serializer`: Serializer to use for serializing and deserializing values (default: `aiocache.serializers.JsonSerializer`).
+- `plugins`: List of plugins to use (default: `[]`).
+- `namespace`: Namespace to use for the cache (default: `""`).
+- `timeout`: Timeout for cache operations (default: `5`).
+- `table_name`: Name of the DynamoDB table to use for caching.
 - `endpoint_url`: Endpoint URL for DynamoDB (useful for LocalStack).
-- `region_name`: AWS region (default: us-east-1).
+- `region_name`: AWS region (default: `"us-east-1"`).
 - `aws_access_key_id`: AWS access key ID.
 - `aws_secret_access_key`: AWS secret access key.
-- `key_column`: Column name for the cache key (default: cache_key).
-- `value_column`: Column name for the cache value (default: cache_value).
-- `ttl_column`: Column name for the TTL (default: ttl).
+- `key_column`: Column name for the cache key (default: `"cache_key"`).
+- `value_column`: Column name for the cache value (default: `"cache_value"`).
+- `ttl_column`: Column name for the TTL (default: `"ttl"`).
 
 
 # Local Development:

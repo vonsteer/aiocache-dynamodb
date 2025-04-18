@@ -3,15 +3,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Generator
+from typing import TYPE_CHECKING, Any, Callable, Generator
 
 from aiobotocore.session import get_session
 from aiocache.base import BaseCache
+from aiocache.serializers import StringSerializer
 from botocore.exceptions import ClientError
 
 from aiocache_dynamodb import constants, exceptions, utils
 
 if TYPE_CHECKING:  # pragma: no cover
+    from aiocache.serializers import BaseSerializer
     from types_aiobotocore_dynamodb.client import DynamoDBClient
     from types_aiobotocore_dynamodb.type_defs import (
         AttributeValueTypeDef,
@@ -20,16 +22,8 @@ if TYPE_CHECKING:  # pragma: no cover
     )
 
 
-class DynamoDBCache(BaseCache):
-    """DynamoDB cache backend.
-
-    It is an asynchronous cache backend that uses the DynamoDB
-    service to store and retrieve cache items. It gets around
-    some of the quirks of DynamoDB for you to make it easier
-    to fully use DymanoDB as a cache backend.
-    """
-
-    NAME = "dynamodb"
+class DynamoDBBackend(BaseCache):
+    """DynamoDB cache backend."""
 
     def __init__(
         self,
@@ -111,14 +105,14 @@ class DynamoDBCache(BaseCache):
         """Returns the DynamoDB client."""
         if not getattr(self, "_dynamodb_client", None):
             self._dynamodb_client = await self._get_client()
-            with self.handle_exceptions():
+            with self._handle_exceptions():
                 await self._dynamodb_client.describe_table(
                     TableName=self.table_name,
                 )
             self._client_initialised = True
         return self._dynamodb_client
 
-    async def __aenter__(self) -> "DynamoDBCache":
+    async def __aenter__(self) -> "DynamoDBBackend":
         """Enters the context manager and initializes the DynamoDB client.
 
         :return: The DynamoDBCache instance.
@@ -155,7 +149,7 @@ class DynamoDBCache(BaseCache):
         current_time = int(datetime.now(tz=timezone.utc).timestamp())
         # We need to this overly complex query as items with ttl
         # are only deleted within 48hrs of the expiration time.
-        with self.handle_exceptions():
+        with self._handle_exceptions():
             response = await dynamodb_client.query(
                 Limit=1,
                 TableName=self.table_name,
@@ -191,7 +185,7 @@ class DynamoDBCache(BaseCache):
         return value
 
     @contextlib.contextmanager
-    def handle_exceptions(self) -> Generator[None, None, None]:
+    def _handle_exceptions(self) -> Generator[None, None, None]:
         """Handle exceptions raised by the DynamoDB client."""
         try:
             yield
@@ -232,7 +226,7 @@ class DynamoDBCache(BaseCache):
         """
         dynamodb_client = await self.client
         results = []
-        with self.handle_exceptions():
+        with self._handle_exceptions():
             response = await dynamodb_client.batch_get_item(
                 RequestItems={
                     self.table_name: {
@@ -248,7 +242,7 @@ class DynamoDBCache(BaseCache):
             while unprocessed_keys:
                 attempts += 1
                 await asyncio.sleep(attempts)
-                with self.handle_exceptions():
+                with self._handle_exceptions():
                     response = await dynamodb_client.batch_get_item(
                         RequestItems=unprocessed_keys,
                     )
@@ -280,7 +274,7 @@ class DynamoDBCache(BaseCache):
         :return: None
         """
         dynamodb_client = await self.client
-        with self.handle_exceptions():
+        with self._handle_exceptions():
             await dynamodb_client.put_item(
                 TableName=self.table_name,
                 Item=self._build_set_input(key, value, ttl),
@@ -401,7 +395,7 @@ class DynamoDBCache(BaseCache):
                 ],
             },
         }
-        with self.handle_exceptions():
+        with self._handle_exceptions():
             await dynamodb_client.batch_write_item(**payload)
 
     async def _multi_delete(
@@ -439,7 +433,7 @@ class DynamoDBCache(BaseCache):
                 ],
             },
         }
-        with self.handle_exceptions():
+        with self._handle_exceptions():
             await dynamodb_client.batch_write_item(**payload)
 
     async def _delete(self, key: str, _conn: None = None) -> None:
@@ -450,7 +444,7 @@ class DynamoDBCache(BaseCache):
         :return: None.
         """
         dynamodb_client = await self.client
-        with self.handle_exceptions():
+        with self._handle_exceptions():
             await dynamodb_client.delete_item(
                 TableName=self.table_name,
                 Key=self._build_get_input(key),
@@ -573,6 +567,89 @@ class DynamoDBCache(BaseCache):
 
         await dynamodb_client.update_item(
             **payload,
+        )
+
+
+class DynamoDBCache(DynamoDBBackend):
+    """
+    DynamoDB cache implementation with the following components as defaults:
+        - serializer: :class:`aiocache.serializers.StringSerializer`
+        - plugins: None
+
+    Config options are:
+
+    :param table_name: The name of the DynamoDB table to use for caching.
+    :type table_name: str
+    :param serializer: obj derived from :class:`aiocache.serializers.BaseSerializer`,
+        used to serialize and deserialize values. Default is
+         :class:`aiocache.serializers.StringSerializer`.
+    :type serializer: :class:`aiocache.serializers.BaseSerializer`
+    :param plugins: list of :class:`aiocache.plugins.BasePlugin` derived classes.
+        Default is an empty list.
+    :type plugins: list of :class:`aiocache.plugins.BasePlugin`
+    :param namespace: string to use as default prefix for the key used in all operations
+      of the backend. Default is an empty string, "".
+    :type namespace: str, optional
+    :param timeout: int or float in seconds specifying maximum timeout for the
+        operations to last. Defaults to 5.
+    :type timeout: int or float, optional
+    :param endpoint_url: The endpoint URL to use for the DynamoDB client.
+    :type endpoint_url: str, optional
+    :param region_name: The region name to use for the DynamoDB client. Defaults to
+        "us-east-1".
+    :type region_name: str, optional
+    :param aws_access_key_id: The AWS access key ID to use for the DynamoDB client.
+    :type aws_access_key_id: str, optional
+    :param aws_secret_access_key: The AWS secret access key to use for the DynamoDB
+      client.
+    :type aws_secret_access_key: str, optional
+    :param key_column: The name of the key column in the DynamoDB table. Defaults
+        to "cache_key".
+    :type key_column: str, optional
+    :param value_column: The name of the value column in the DynamoDB table. Defaults
+        to "cache_value".
+    :type value_column: str, optional
+    :param ttl_column: The name of the TTL column in the DynamoDB table. Defaults to
+        "ttl".
+    :type ttl_column: str, optional
+    :param key_builder: A callable that takes a key and namespace and returns a
+        formatted key. Default is a lambda function that formats the key with the
+        namespace.
+    :type key_builder: callable, optional
+    :param kwargs: Additional keyword arguments to pass to the parent class.
+    :type kwargs: dict, optional
+    """
+
+    NAME = "dynamodb"
+
+    def __init__(
+        self,
+        table_name: str,
+        serializer: BaseSerializer | None = None,
+        namespace: str = "",
+        key_builder: Callable[[str, str], str] | None = None,
+        endpoint_url: str | None = None,
+        region_name: str = constants.DEFAULT_REGION,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+        key_column: str = constants.DEFAULT_KEY_COLUMN,
+        value_column: str = constants.DEFAULT_VALUE_COLUMN,
+        ttl_column: str = constants.DEFAULT_TTL_COLUMN,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            serializer=serializer or StringSerializer(),
+            namespace=namespace,
+            key_builder=key_builder,
+            table_name=table_name,
+            endpoint_url=endpoint_url,
+            region_name=region_name,
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            key_column=key_column,
+            value_column=value_column,
+            ttl_column=ttl_column,
+            **kwargs,
         )
 
     def __repr__(self) -> str:
