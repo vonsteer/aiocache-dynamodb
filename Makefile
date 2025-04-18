@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := help
 py_version ?= 3.12
 PYTHON = python${py_version}
+PACKAGE = aiocache_dynamodb
 
 .PHONY: help
 help:  ## Shows this help message
@@ -17,7 +18,7 @@ badge:
 
 .PHONY: run-tests
 run-tests:
-	$(PYTHON) -m pytest --cov=taskiq_aio_sqs --cov-report term-missing --cov-fail-under=95 --cov-report xml:coverage.xml
+	$(PYTHON) -m pytest --cov=$(PACKAGE) --cov-report term-missing --cov-fail-under=95 --cov-report xml:coverage.xml
 
 .PHONY: test
 test: localstack-init run-tests localstack-stop badge ## Run testing and coverage.
@@ -44,7 +45,7 @@ ruff-format: ## Runs style checkers fixing issues
 
 .PHONY: typing
 typing: ## Runs pyright static type checking
-	$(PYTHON) -m pyright taskiq_aio_sqs/
+	$(PYTHON) -m pyright $(PACKAGE)/
 
 .PHONY: check
 check: ruff-check typing ## Runs all quality checks without fixing issues
