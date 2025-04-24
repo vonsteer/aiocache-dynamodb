@@ -21,6 +21,6 @@ jobs:
       - name: Install dependencies
         run: make dev
       - name: Build dist
-        run: uv python -m build
+        run: uv build
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
