@@ -10,7 +10,7 @@ help:  ## Shows this help message
 ##@ 🛠  Testing and development
 .PHONY: install
 install: ## Installs package with development dependencies
-	$(PYTHON) -m pip install .[dev]
+	uv sync --locked --all-extras --dev --python=$(py_version)
 
 .PHONY: badge
 badge:
@@ -18,7 +18,7 @@ badge:
 
 .PHONY: run-tests
 run-tests:
-	$(PYTHON) -m pytest --cov=$(PACKAGE) --cov-report term-missing --cov-fail-under=95 --cov-report xml:coverage.xml
+	uv run pytest --cov=$(PACKAGE) --cov-report term-missing --cov-fail-under=95 --cov-report xml:coverage.xml
 
 .PHONY: test
 test: localstack-init run-tests localstack-stop badge ## Run testing and coverage.
@@ -37,15 +37,15 @@ localstack-stop: ## Starts localstack with init script
 ##@ 👷 Quality
 .PHONY: ruff-check
 ruff-check: ## Runs ruff without fixing issues
-	$(PYTHON) -m ruff check
+	uv run -m ruff check
 
 .PHONY: ruff-format
 ruff-format: ## Runs style checkers fixing issues
-	$(PYTHON) -m ruff format; $(PYTHON) -m ruff check --fix
+	uv run -m ruff format; uv run -m ruff check --fix
 
 .PHONY: typing
 typing: ## Runs pyright static type checking
-	$(PYTHON) -m pyright $(PACKAGE)/
+	uv run -m pyright $(PACKAGE)/
 
 .PHONY: check
 check: ruff-check typing ## Runs all quality checks without fixing issues
