@@ -1,6 +1,4 @@
 .DEFAULT_GOAL := help
-py_version ?= 3.12
-PYTHON = python${py_version}
 PACKAGE = aiocache_dynamodb
 
 .PHONY: help
@@ -8,9 +6,9 @@ help:  ## Shows this help message
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target> <arg=value>\033[0m\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m  %s\033[0m\n\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
 ##@ 🛠  Testing and development
-.PHONY: install
-install: ## Installs package with development dependencies
-	uv sync --locked --all-extras --dev --python=$(py_version)
+.PHONY: sync
+sync: ## Installs package with development dependencies
+	uv sync --locked --all-extras --dev
 
 .PHONY: badge
 badge:
