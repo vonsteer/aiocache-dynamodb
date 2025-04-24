@@ -91,9 +91,9 @@ make
 ## Setup
 To setup the project, you can run the following commands:
 ```bash
-make install
+make dev
 ```
-This will install the required dependencies for the project using pip.
+This will install the required dependencies for the project using uv + pip.
 
 ## Linting
 We use pre-commit to do linting locally, this will be included in the dev dependencies.
