@@ -32,6 +32,8 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
+      - name: Start LocalStack
+        uses: LocalStack/setup-localstack@v0.2.4
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
