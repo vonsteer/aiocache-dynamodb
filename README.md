@@ -91,7 +91,7 @@ make
 ## Setup
 To setup the project, you can run the following commands:
 ```bash
-make sync
+make dev
 ```
 This will install the required dependencies for the project using uv + pip.
 

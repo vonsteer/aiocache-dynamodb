@@ -6,13 +6,13 @@ help:  ## Shows this help message
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target> <arg=value>\033[0m\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m  %s\033[0m\n\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
 ##@ 🛠  Testing and development
-.PHONY: sync
-sync: ## Installs package with development dependencies
+.PHONY: dev
+dev: ## Installs package with development dependencies
 	uv sync --locked --all-extras --dev
 
 .PHONY: badge
 badge:
-	genbadge coverage -i coverage.xml
+	uv run genbadge coverage -i coverage.xml
 
 .PHONY: run-tests
 run-tests:
@@ -26,11 +26,11 @@ test: localstack-init run-tests localstack-stop ## Run testing and coverage.
 
 .PHONY: localstack-init
 localstack-init: ## Starts localstack with init script
-	localstack start -d --no-banner; localstack wait -t 45
+	uv run localstack start -d --no-banner; localstack wait -t 45
 
 .PHONY: localstack-stop
 localstack-stop: ## Starts localstack with init script
-	localstack stop
+	uv run localstack stop
 
 ##@ 👷 Quality
 .PHONY: ruff-check
