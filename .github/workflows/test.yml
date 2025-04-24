@@ -42,7 +42,7 @@ jobs:
       - name: Install the project
         run: make dev
       - name: Run pytest check for Python ${{ matrix.py_version }}
-        run: make test
+        run: make test-ci
       - name: Show Coverage
         if: github.event_name == 'pull_request' && matrix.py_version == '3.12'
         uses: orgoro/coverage@v3.2
