@@ -172,7 +172,7 @@ class DynamoDBBackend(BaseCache):
         self,
         data: dict[str, Any],
         encoding: str | None = None,
-    ) -> str:
+    ) -> Any:
         """Retrieve the value from the DynamoDB response data.
 
         :param data: The item to retrieve the value from.
@@ -509,7 +509,7 @@ class DynamoDBBackend(BaseCache):
         )
         return "Item" in response
 
-    async def _increment(self, key: str, delta: int, _conn: None = None) -> int:
+    async def _increment(self, key: str, delta: float, _conn: None = None) -> float:
         """Increments the value of an item in the DynamoDB table.
 
         This method uses the update_item method to increment the value
@@ -520,19 +520,44 @@ class DynamoDBBackend(BaseCache):
         :param delta: The amount to increment the value by.
         :param _conn: The connection to use. (Not used)
         :return: The new value of the item.
+        :raises DynamoDBClientError: If the item cannot be incremented.
         """
         dynamodb_client = await self.client
-        response = await dynamodb_client.update_item(
-            TableName=self.table_name,
-            Key=self._build_get_input(key),
-            UpdateExpression="SET #val = #val + :delta",
-            ExpressionAttributeNames={
-                "#val": self.value_column,
-            },
-            ExpressionAttributeValues={":delta": {"N": str(delta)}},
-            ReturnValues="UPDATED_NEW",
-        )
-        return int(response["Attributes"][self.value_column]["N"])  # type: ignore[reportTypedDictNotRequiredAccess]
+        try:
+            response = await dynamodb_client.update_item(
+                TableName=self.table_name,
+                Key=self._build_get_input(key),
+                UpdateExpression="SET #val = if_not_exists(#val, :start) + :delta",
+                ExpressionAttributeNames={
+                    "#val": self.value_column,
+                },
+                ExpressionAttributeValues={
+                    ":start": {"N": str(0) if isinstance(delta, int) else str(0.0)},
+                    ":delta": {"N": str(delta)},
+                },
+                ReturnValues="UPDATED_NEW",
+            )
+        except ClientError as e:
+            error = e.response.get("Error", {})
+            code = error.get("Code")
+            if code == "ValidationException" and (item := await self.get(key)):
+                # This is raised when the item can't be automatically incremented
+                # because the value is not set as a number in DynamoDB.
+                # To get around this we'll manually increment the value
+                # and set it back to the item.
+                try:
+                    item += delta
+                except TypeError as e:
+                    raise exceptions.DynamoDBClientError(
+                        f"Item {key} is not a number: {item}",
+                    ) from e
+                await self.set(key, item)
+                return item
+            raise exceptions.DynamoDBClientError(  # pragma: no cover
+                f"Failed to increment item in DynamoDB table: {error}",
+            ) from e
+
+        return self._retrieve_value(response["Attributes"])
 
     async def _expire(
         self,

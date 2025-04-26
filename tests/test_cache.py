@@ -114,7 +114,32 @@ async def test_increment(test_table: str, dynamodb_cache: DynamoDBCache) -> None
     # Increment the value
     delta = 5
     new_value = await dynamodb_cache.increment(key, delta)
-    assert new_value == initial_value + delta
+    assert new_value == str(initial_value + delta)
+
+    # Verify the value in the table
+    assert await dynamodb_cache.get(key) == str(initial_value + delta)
+
+    await dynamodb_cache.delete(key)
+
+
+@pytest.mark.asyncio
+async def test_increment_non_existent(
+    test_table: str,
+    dynamodb_cache: DynamoDBCache,
+) -> None:
+    """
+    Test the increment method to increment a non existent
+    numeric value in the DynamoDB table.
+    """
+    key = "counter_non_existent"
+    initial_value = 10
+    await dynamodb_cache.increment(key, initial_value)
+    assert await dynamodb_cache.get(key) == str(initial_value)
+
+    # Increment the value
+    delta = 5
+    new_value = await dynamodb_cache.increment(key, delta)
+    assert new_value == str(initial_value + delta)
 
     # Verify the value in the table
     assert await dynamodb_cache.get(key) == str(initial_value + delta)

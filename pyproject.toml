@@ -44,8 +44,21 @@ dev = [
     "pytest-asyncio~=0.24.0",
     "pytest-cov~=6.1.1",
     "localstack~=4.3.0",
-    "types_aiobotocore[essential]>=2.8.0"
+    "types_aiobotocore[essential]>=2.8.0",
+    "msgpack==1.1.0",
+    "ujson==5.10.0"
 ]
+
+[tool.pyright]
+typeCheckingMode = "standard"
+include = ["aiocache_dynamodb"]
+exclude = [
+    "**/__pycache__",
+    "**/tests"
+]
+reportMissingImports = "error"
+reportMissingTypeStubs = false
+
 
 [tool.pytest.ini_options]
 testpaths = "tests"
