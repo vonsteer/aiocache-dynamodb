@@ -10,6 +10,10 @@ help:  ## Shows this help message
 dev: ## Installs package with development dependencies
 	uv sync --locked --all-extras --dev
 
+.PHONY: upgrade
+upgrade: ## Upgrades package with development dependencies
+	uv lock --upgrade
+
 .PHONY: badge
 badge:
 	uv run genbadge coverage -i coverage.xml
