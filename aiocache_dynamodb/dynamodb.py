@@ -521,8 +521,6 @@ class DynamoDBBackend(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: The new value of the item.
         :raises DynamoDBClientError: If the item cannot be incremented.
-        :raises DynamoDBInvalidInputError: If the item cannot be incremented
-            because the value is not set as a number in DynamoDB.
         """
         dynamodb_client = await self.client
         try:
