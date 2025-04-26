@@ -22,6 +22,10 @@ badge:
 run-tests:
 	uv run pytest --cov=$(PACKAGE) --cov-report term-missing --cov-fail-under=95 --cov-report xml:coverage.xml
 
+.PHONY: test-only
+test-only: ## Run specific tests with cmdline arguments
+	uv run pytest -k "$(filter-out $@,$(MAKECMDGOALS))"
+
 .PHONY: test
 test: localstack-init run-tests localstack-stop badge ## Run testing and coverage.
 
