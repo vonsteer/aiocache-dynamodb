@@ -94,6 +94,10 @@ To setup the project, you can run the following commands:
 make dev
 ```
 This will install the required dependencies for the project using uv + pip.
+When updating the dependencies, you can run the following command to update the uv lock file:
+```bash
+make upgrade
+```
 
 ## Linting
 We use pre-commit to do linting locally, this will be included in the dev dependencies.
