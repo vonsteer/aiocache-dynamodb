@@ -38,6 +38,21 @@ async def test_init_failure_invalid_table(aws_credentials: dict[str, Any]) -> No
 
 
 @pytest.mark.asyncio
+async def test_init_failure_invalid_bucket(
+    test_table: str,
+    aws_credentials: dict[str, Any],
+) -> None:
+    """Test the initialization of DynamoDBCache with invalid parameters."""
+    with pytest.raises(exceptions.BucketNotFoundError):
+        cache = DynamoDBCache(
+            table_name=test_table,
+            bucket_name="hello_there",
+            **aws_credentials,
+        )
+        await cache.__aenter__()
+
+
+@pytest.mark.asyncio
 async def test_get_client_and_repr(
     test_table: str,
     dynamodb_cache: DynamoDBCache,
@@ -79,12 +94,15 @@ async def test_value_casting() -> None:
 @pytest.mark.asyncio
 async def test_retrieve_value(test_table: str, dynamodb_cache: DynamoDBCache) -> None:
     """Test the _retrieve_value method for various response items."""
-    assert dynamodb_cache._retrieve_value({"cache_value": {"S": "test"}}) == "test"
-    assert dynamodb_cache._retrieve_value({"cache_value": {"N": "123"}}) == "123"
     assert (
-        dynamodb_cache._retrieve_value({"cache_value": {"B": b"binary"}}) == b"binary"
+        await dynamodb_cache._retrieve_value({"cache_value": {"S": "test"}}) == "test"
     )
-    assert dynamodb_cache._retrieve_value({"cache_value": {"BOOL": True}}) is True
+    assert await dynamodb_cache._retrieve_value({"cache_value": {"N": "123"}}) == "123"
+    assert (
+        await dynamodb_cache._retrieve_value({"cache_value": {"B": b"binary"}})
+        == b"binary"
+    )
+    assert await dynamodb_cache._retrieve_value({"cache_value": {"BOOL": True}}) is True
 
 
 @pytest.mark.asyncio
@@ -196,6 +214,46 @@ async def test_set(test_table: str, dynamodb_cache: DynamoDBCache) -> None:
     )
     assert "Item" in response
     assert response["Item"][dynamodb_cache.value_column]["S"] == value
+
+
+@pytest.mark.asyncio
+async def test_set_large_item_failure(
+    test_table: str,
+    dynamodb_cache: DynamoDBCache,
+) -> None:
+    """Test that setting a large item raises an error without s3.
+
+    The maximum size for a single item in DynamoDB is 400KB.
+    """
+    # Add an item to the table
+    key = "set_key"
+    value = "x" * 1024 * 400  # 400KB
+    with pytest.raises(
+        exceptions.DynamoDBInvalidInputError,
+        match="Item size has exceeded the maximum allowed size",
+    ):
+        await dynamodb_cache.set(key, value)
+
+
+@pytest.mark.asyncio
+async def test_set_get_delete_large_item_s3(
+    test_table: str,
+    s3_bucket: str,
+    dynamodb_cache_with_s3: DynamoDBCache,
+) -> None:
+    """Test that setting a large item works with s3."""
+    # Add an item to the table
+    key = "set_key"
+    value = "x" * 1024 * 400  # 400KB
+    # Should fail under normal circumstances but not here as
+    # we have the s3 extension enabled
+    await dynamodb_cache_with_s3.set(key, value)
+
+    item = await dynamodb_cache_with_s3.get(key)
+    assert item == value
+    await dynamodb_cache_with_s3.delete(key)
+    item = await dynamodb_cache_with_s3.get(key)
+    assert item is None
 
 
 @pytest.mark.asyncio
