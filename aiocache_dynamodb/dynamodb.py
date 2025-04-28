@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Callable, Generator
+from typing import TYPE_CHECKING, Any, Callable, Generator, Literal, cast, overload
 
 from aiobotocore.session import get_session
 from aiocache.base import BaseCache
@@ -20,6 +20,7 @@ if TYPE_CHECKING:  # pragma: no cover
         BatchWriteItemInputTypeDef,
         UpdateItemInputTypeDef,
     )
+    from types_aiobotocore_s3.client import S3Client
 
 
 class DynamoDBBackend(BaseCache):
@@ -28,6 +29,7 @@ class DynamoDBBackend(BaseCache):
     def __init__(
         self,
         table_name: str,
+        bucket_name: str | None = None,
         endpoint_url: str | None = None,
         region_name: str = constants.DEFAULT_REGION,
         aws_access_key_id: str | None = None,
@@ -35,6 +37,7 @@ class DynamoDBBackend(BaseCache):
         key_column: str = constants.DEFAULT_KEY_COLUMN,
         value_column: str = constants.DEFAULT_VALUE_COLUMN,
         ttl_column: str = constants.DEFAULT_TTL_COLUMN,
+        s3_bucket_column: str = constants.DEFAULT_S3_BUCKET_COLUMN,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -43,11 +46,14 @@ class DynamoDBBackend(BaseCache):
         self._aws_access_key_id = aws_access_key_id
         self._aws_secret_access_key = aws_secret_access_key
         self.table_name = table_name
+        self.bucket_name = bucket_name
         self.key_column = key_column
         self.value_column = value_column
         self.ttl_column = ttl_column
+        self.s3_bucket_column = s3_bucket_column
         self._session = get_session()
-        self._dynamodb_client: DynamoDBClient
+        self._dynamodb_client: DynamoDBClient | None = None
+        self._s3_client: S3Client | None = None
 
     @classmethod
     def _value_casting(
@@ -79,7 +85,25 @@ class DynamoDBBackend(BaseCache):
                 )
         return cast_value
 
-    async def _get_client(self) -> "DynamoDBClient":
+    @overload
+    async def _get_client(
+        self,
+        client_type: Literal["dynamodb"],
+    ) -> DynamoDBClient: ...
+
+    @overload
+    async def _get_client(
+        self,
+        client_type: Literal["s3"],
+    ) -> S3Client: ...
+
+    @overload
+    async def _get_client(self) -> DynamoDBClient: ...
+
+    async def _get_client(
+        self,
+        client_type: Literal["dynamodb", "s3"] = "dynamodb",
+    ) -> "DynamoDBClient | S3Client":
         """
         Retrieves the DynamoDB client, creating it if necessary.
 
@@ -87,30 +111,49 @@ class DynamoDBBackend(BaseCache):
         :raises ClientCreationError: If the client cannot be created.
         """
         try:
-            self._client_context_creator = self._session.create_client(
-                "dynamodb",
-                region_name=self._aws_region,
-                endpoint_url=self._aws_endpoint_url,
-                aws_access_key_id=self._aws_access_key_id,
-                aws_secret_access_key=self._aws_secret_access_key,
+            kwargs = {
+                "region_name": self._aws_region,
+                "endpoint_url": self._aws_endpoint_url,
+                "aws_access_key_id": self._aws_access_key_id,
+                "aws_secret_access_key": self._aws_secret_access_key,
+            }
+            if client_type == "s3":
+                self._s3_client_context_creator = self._session.create_client(
+                    client_type,
+                    **kwargs,
+                )
+                return await self._s3_client_context_creator.__aenter__()
+            self._dynamodb_client_context_creator = self._session.create_client(
+                client_type,
+                **kwargs,
             )
-            return await self._client_context_creator.__aenter__()
+            return await self._dynamodb_client_context_creator.__aenter__()
         except Exception as e:
             raise exceptions.ClientCreationError(
                 f"Failed to create DynamoDB client: {e}",
             ) from e
 
     @property
-    async def client(self) -> "DynamoDBClient":
+    async def dynamodb_client(self) -> "DynamoDBClient":
         """Returns the DynamoDB client."""
-        if not getattr(self, "_dynamodb_client", None):
+        if not self._dynamodb_client:
             self._dynamodb_client = await self._get_client()
             with self._handle_exceptions():
                 await self._dynamodb_client.describe_table(
                     TableName=self.table_name,
                 )
-            self._client_initialised = True
         return self._dynamodb_client
+
+    @property
+    async def s3_client(self) -> "S3Client":
+        """Returns the S3 client."""
+        if not self._s3_client:
+            self._s3_client = await self._get_client("s3")
+            with self._handle_exceptions():
+                await self._s3_client.head_bucket(
+                    Bucket=cast(str, self.bucket_name),
+                )
+        return self._s3_client
 
     async def __aenter__(self) -> "DynamoDBBackend":
         """Enters the context manager and initializes the DynamoDB client.
@@ -118,14 +161,20 @@ class DynamoDBBackend(BaseCache):
         :return: The DynamoDBCache instance.
         :raises ClientCreationError: If the client cannot be created.
         :raises TableNotFoundError: If the table does not exist.
+        :raises BucketNotFoundError: If the bucket does not exist, when using
+          the s3 extension feature.
         """
-        await self.client
+        await self.dynamodb_client
+        if self.bucket_name:
+            await self.s3_client
         return await super().__aenter__()
 
     async def _close(self, _conn: None = None) -> None:
         """Closes the DynamoDB client."""
-        if hasattr(self, "_client_context_creator"):
-            await self._client_context_creator.__aexit__(None, None, None)
+        if hasattr(self, "_s3_client_context_creator"):
+            await self._s3_client_context_creator.__aexit__(None, None, None)
+        if hasattr(self, "_dynamodb_client_context_creator"):
+            await self._dynamodb_client_context_creator.__aexit__(None, None, None)
 
     async def _get(
         self,
@@ -145,7 +194,7 @@ class DynamoDBBackend(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: The value of the item.
         """
-        dynamodb_client = await self.client
+        dynamodb_client = await self.dynamodb_client
         current_time = int(datetime.now(tz=timezone.utc).timestamp())
         # We need to this overly complex query as items with ttl
         # are only deleted within 48hrs of the expiration time.
@@ -165,10 +214,10 @@ class DynamoDBBackend(BaseCache):
                 },
             )
         if items := response.get("Items"):
-            return self._retrieve_value(items[0], encoding)
+            return await self._retrieve_value(items[0], encoding)
         return None
 
-    def _retrieve_value(
+    async def _retrieve_value(
         self,
         data: dict[str, Any],
         encoding: str | None = None,
@@ -180,6 +229,14 @@ class DynamoDBBackend(BaseCache):
         :return: The string value of the item.
         """
         value = next(iter(data[self.value_column].values()))
+
+        if bucket_name := data.get(self.s3_bucket_column, {}).get("S"):
+            s3_client = await self.s3_client
+            if item := await s3_client.get_object(Bucket=bucket_name, Key=value):
+                value = await item["Body"].read()
+                with contextlib.suppress(UnicodeDecodeError):
+                    value = value.decode(encoding=encoding or "utf-8")
+                return value
         if encoding and isinstance(value, str):
             return value.encode(encoding).decode(encoding)
         return value
@@ -195,6 +252,8 @@ class DynamoDBBackend(BaseCache):
             error_message = error.get("Message")
             if code == "ResourceNotFoundException":
                 raise exceptions.TableNotFoundError(error_message) from e
+            elif code == "404":
+                raise exceptions.BucketNotFoundError from e
             elif code == "ValidationException":
                 raise exceptions.DynamoDBInvalidInputError(error_message) from e
             elif code == "ProvisionedThroughputExceededException":  # pragma: no cover
@@ -224,7 +283,7 @@ class DynamoDBBackend(BaseCache):
         :param _conn: The connection to use.  (Not used)
         :return: The values of the items.
         """
-        dynamodb_client = await self.client
+        dynamodb_client = await self.dynamodb_client
         results = []
         with self._handle_exceptions():
             response = await dynamodb_client.batch_get_item(
@@ -235,7 +294,7 @@ class DynamoDBBackend(BaseCache):
                 },
             )
         if items := response["Responses"].get(self.table_name):
-            results = [self._retrieve_value(item, encoding) for item in items]
+            results = [await self._retrieve_value(item, encoding) for item in items]
 
         if unprocessed_keys := response.get("UnprocessedKeys"):
             attempts = 0
@@ -248,7 +307,7 @@ class DynamoDBBackend(BaseCache):
                     )
                 if items := response["Responses"].get(self.table_name):
                     results.extend(
-                        [self._retrieve_value(item, encoding) for item in items],
+                        [await self._retrieve_value(item, encoding) for item in items],
                     )
                 unprocessed_keys = response.get("UnprocessedKeys")
         return results
@@ -272,13 +331,36 @@ class DynamoDBBackend(BaseCache):
         :param _cas_token: The CAS token for optimistic locking. (Not used)
         :param _conn: The connection to use.  (Not used)
         :return: None
+        :raises DynamoDBInvalidInputError: If the input is too large or invalid.
         """
-        dynamodb_client = await self.client
-        with self._handle_exceptions():
-            await dynamodb_client.put_item(
-                TableName=self.table_name,
-                Item=self._build_set_input(key, value, ttl),
-            )
+        dynamodb_client = await self.dynamodb_client
+        try:
+            with self._handle_exceptions():
+                await dynamodb_client.put_item(
+                    TableName=self.table_name,
+                    Item=self._build_set_input(key, value, ttl),
+                )
+        except exceptions.DynamoDBInvalidInputError as e:
+            if self.bucket_name:
+                # If the input is too large, we need to store it in S3
+                # and store the S3 key in DynamoDB if the bucket name is set.
+                s3_client = await self.s3_client
+                s3_key = f"{self.table_name}/{key}"
+                with self._handle_exceptions():
+                    await s3_client.put_object(
+                        Bucket=self.bucket_name,
+                        Key=s3_key,
+                        Body=value,
+                    )
+                    await dynamodb_client.put_item(
+                        TableName=self.table_name,
+                        Item={
+                            **self._build_set_input(key, s3_key, ttl),
+                            self.s3_bucket_column: {"S": self.bucket_name},
+                        },
+                    )
+            else:
+                raise e
 
     async def _add(
         self,
@@ -296,7 +378,7 @@ class DynamoDBBackend(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: None.
         """
-        dynamodb_client = await self.client
+        dynamodb_client = await self.dynamodb_client
         try:
             await dynamodb_client.put_item(
                 TableName=self.table_name,
@@ -378,7 +460,7 @@ class DynamoDBBackend(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: None
         """
-        dynamodb_client = await self.client
+        dynamodb_client = await self.dynamodb_client
         payload: BatchWriteItemInputTypeDef = {
             "RequestItems": {
                 self.table_name: [
@@ -416,7 +498,7 @@ class DynamoDBBackend(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: None.
         """
-        dynamodb_client = await self.client
+        dynamodb_client = await self.dynamodb_client
         payload: BatchWriteItemInputTypeDef = {
             "RequestItems": {
                 self.table_name: [
@@ -443,12 +525,24 @@ class DynamoDBBackend(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: None.
         """
-        dynamodb_client = await self.client
+        dynamodb_client = await self.dynamodb_client
         with self._handle_exceptions():
-            await dynamodb_client.delete_item(
+            response = await dynamodb_client.delete_item(
                 TableName=self.table_name,
                 Key=self._build_get_input(key),
+                ReturnValues="ALL_OLD",
             )
+            if (
+                (attributes := response.get("Attributes"))
+                and (bucket_name := attributes.get(self.s3_bucket_column, {}).get("S"))
+                and (s3_key := attributes[self.value_column].get("S"))
+            ):
+                s3_client = await self.s3_client
+                with self._handle_exceptions():
+                    await s3_client.delete_object(
+                        Bucket=bucket_name,
+                        Key=s3_key,
+                    )
 
     async def _clear(self, namespace: str | None = None, _conn: None = None) -> None:
         """Clears the cache for the given namespace.
@@ -462,7 +556,7 @@ class DynamoDBBackend(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: None
         """
-        dynamodb_client = await self.client
+        dynamodb_client = await self.dynamodb_client
         additional_payload = {
             "ProjectionExpression": self.key_column,
             "Limit": 25,
@@ -502,7 +596,7 @@ class DynamoDBBackend(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: True if the item exists, False otherwise.
         """
-        dynamodb_client = await self.client
+        dynamodb_client = await self.dynamodb_client
         response = await dynamodb_client.get_item(
             TableName=self.table_name,
             Key=self._build_get_input(key),
@@ -522,7 +616,7 @@ class DynamoDBBackend(BaseCache):
         :return: The new value of the item.
         :raises DynamoDBClientError: If the item cannot be incremented.
         """
-        dynamodb_client = await self.client
+        dynamodb_client = await self.dynamodb_client
         try:
             response = await dynamodb_client.update_item(
                 TableName=self.table_name,
@@ -557,7 +651,7 @@ class DynamoDBBackend(BaseCache):
                 f"Failed to increment item in DynamoDB table: {error}",
             ) from e
 
-        return self._retrieve_value(response["Attributes"])
+        return await self._retrieve_value(response["Attributes"])
 
     async def _expire(
         self,
@@ -576,7 +670,7 @@ class DynamoDBBackend(BaseCache):
         :param _conn: The connection to use. (Not used)
         :return: None
         """
-        dynamodb_client = await self.client
+        dynamodb_client = await self.dynamodb_client
         payload: UpdateItemInputTypeDef = {
             "TableName": self.table_name,
             "Key": self._build_get_input(key),
@@ -605,6 +699,9 @@ class DynamoDBCache(DynamoDBBackend):
 
     :param table_name: The name of the DynamoDB table to use for caching.
     :type table_name: str
+    :param bucket_name: Optional name of the S3 bucket in case S3 extension for larger
+        items is needed.
+    :type bucket_name: str | None
     :param serializer: obj derived from :class:`aiocache.serializers.BaseSerializer`,
         used to serialize and deserialize values. Default is
          :class:`aiocache.serializers.StringSerializer`.
@@ -650,6 +747,7 @@ class DynamoDBCache(DynamoDBBackend):
     def __init__(
         self,
         table_name: str,
+        bucket_name: str | None = None,
         serializer: BaseSerializer | None = None,
         namespace: str = "",
         key_builder: Callable[[str, str], str] | None = None,
@@ -667,6 +765,7 @@ class DynamoDBCache(DynamoDBBackend):
             namespace=namespace,
             key_builder=key_builder,
             table_name=table_name,
+            bucket_name=bucket_name,
             endpoint_url=endpoint_url,
             region_name=region_name,
             aws_access_key_id=aws_access_key_id,
@@ -678,4 +777,10 @@ class DynamoDBCache(DynamoDBBackend):
         )
 
     def __repr__(self) -> str:
+        if self.bucket_name:
+            return "DynamoDBCache ({}:{}, bucket={})".format(
+                self._aws_region,
+                self.table_name,
+                self.bucket_name,
+            )
         return "DynamoDBCache ({}:{})".format(self._aws_region, self.table_name)

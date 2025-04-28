@@ -82,7 +82,6 @@ async def test_table(dynamodb_client: DynamoDBClient) -> AsyncGenerator[str, Any
     await dynamodb_client.delete_table(TableName=TEST_TABLE_NAME)
 
 
-# TODO: This will be used to test future integrations with S3
 @pytest.fixture(scope="session")
 async def s3_bucket(s3_client: S3Client) -> AsyncGenerator[str, Any]:
     response = await s3_client.create_bucket(Bucket=TEST_BUCKET_NAME)
@@ -108,6 +107,22 @@ async def dynamodb_cache(
     aws_credentials: dict[str, Any],
 ) -> AsyncGenerator[DynamoDBCache, Any]:
     cache = DynamoDBCache(table_name=TEST_TABLE_NAME, timeout=10, **aws_credentials)
+    cache = await cache.__aenter__()
+    assert cache._dynamodb_client
+    yield cache
+    await cache.close()
+
+
+@pytest.fixture()
+async def dynamodb_cache_with_s3(
+    aws_credentials: dict[str, Any],
+) -> AsyncGenerator[DynamoDBCache, Any]:
+    cache = DynamoDBCache(
+        table_name=TEST_TABLE_NAME,
+        bucket_name=TEST_BUCKET_NAME,
+        timeout=10,
+        **aws_credentials,
+    )
     cache = await cache.__aenter__()
     assert cache._dynamodb_client
     yield cache
