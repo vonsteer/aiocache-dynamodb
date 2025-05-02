@@ -14,13 +14,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - name: Install the project
-        run: make dev
       - name: Run typing/linting check
         run: make check
+      - run: uv build
+      - name: Smoke test (wheel)
+        run: uv run --isolated --no-project --with dist/*.whl tests/smoke_test.py
+      - name: Smoke test (source distribution)
+        run: uv run --isolated --no-project --with dist/*.tar.gz tests/smoke_test.py
   pytest:
     strategy:
       matrix:
@@ -32,15 +35,11 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
-      - name: Start LocalStack
-        uses: LocalStack/setup-localstack@v0.2.4
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
           python-version: ${{ matrix.py_version }}
-      - name: Install the project
-        run: make dev
       - name: Run pytest check for Python ${{ matrix.py_version }}
         run: make test-ci
       - name: Show Coverage

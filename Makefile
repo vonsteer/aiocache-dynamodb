@@ -8,11 +8,7 @@ help:  ## Shows this help message
 ##@ 🛠  Testing and development
 .PHONY: dev
 dev: ## Installs package with development dependencies
-	uv sync --locked --all-extras --dev
-
-.PHONY: upgrade
-upgrade: ## Upgrades package with development dependencies
-	uv lock --upgrade
+	uv sync --all-extras
 
 .PHONY: badge
 badge:
@@ -30,11 +26,11 @@ test-only: ## Run specific tests with cmdline arguments
 test: localstack-init run-tests localstack-stop badge ## Run testing and coverage.
 
 .PHONY: test-ci
-test-ci: run-tests ## Run testing and coverage.
+test-ci: localstack-init run-tests localstack-stop ## Run testing and coverage.
 
 .PHONY: localstack-init
 localstack-init: ## Starts localstack with init script
-	uv run localstack start -d --no-banner; localstack wait -t 45
+	uv run localstack start -d --no-banner; uv run localstack wait -t 45
 
 .PHONY: localstack-stop
 localstack-stop: ## Starts localstack with init script
