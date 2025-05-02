@@ -20,7 +20,7 @@ For more information on aiobotocore:
 - TTL support for expiring cache items (even though DynamoDB only deletes items within 48hr of expiration, we double-check).
 - Batch operations for efficient multi-key handling.
 - Customizable key, value, and TTL column names.
-- (Planned) S3 integration for large object storage.
+- S3 Extension for large object storage (+400kb)
 ---
 
 ## Installation
@@ -58,6 +58,39 @@ async def main():
     # Check if the key exists
     exists = await cache.exists("my_key")
     print(exists)  # Output: False
+
+    # Close the cache
+    await cache.close()
+
+asyncio.run(main())
+```
+To use the S3 extension feature:
+```python
+import asyncio
+from aiocache_dynamodb import DynamoDBCache
+
+async def main():
+    cache = DynamoDBCache(
+        table_name="my-cache-table",
+        bucket_name="this-is-my-bucket",
+        endpoint_url="http://localhost:4566",  # For local development
+        aws_access_key_id="your-access-key",
+        aws_secret_access_key="your-secret-key",
+        region_name="us-east-1",
+    )
+
+    large_value = "x" * 1024 * 400  # 400KB
+    # Set a value with a TTL of 60 seconds
+    # Deletion of item on S3 is not managed by the TTL
+    # Please use lifecycle policies on the bucket
+    await cache.set("my_key", large_value, ttl=60)
+
+    # Get the value
+    value = await cache.get("my_key")
+    print(value)  # Output: large_value
+
+    # Delete the value (both on dynamodb + S3)
+    await cache.delete("my_key")
 
     # Close the cache
     await cache.close()
