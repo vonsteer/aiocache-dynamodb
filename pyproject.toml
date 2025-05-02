@@ -1,9 +1,11 @@
 [build-system]
-requires = ["setuptools", "setuptools-git-versioning"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 
 [project]
 name = "aiocache-dynamodb"
+version = "1.0.0"
 description = "AioCache DynamoDB Backend using Aiobotocore"
 urls = {source = "https://github.com/vonsteer/aiocache-dynamodb"}
 readme = "README.md"
@@ -11,30 +13,33 @@ requires-python = ">=3.10"
 keywords = ["aiocache", "backend", "aws", "dynamodb", "aiobotocore", "cache", "asyncio"]
 license = {file = "LICENSE"}
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "Intended Audience :: End Users/Desktop",
+    "Intended Audience :: Information Technology",
+    "Framework :: AsyncIO",
     "License :: OSI Approved :: MIT License",
     "Natural Language :: English",
-    "Operating System :: MacOS",
-    "Operating System :: POSIX",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13"
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development",
+    "Topic :: System :: Networking",
+    "Typing :: Typed",
+    "Operating System :: OS Independent",
 ]
 dependencies = [
     "botocore~=1.37.1",
     "aiobotocore~=2.21.1",
     "aiocache>=0.12.3,<1.0"
 ]
-dynamic = ["version"]
 
-[tool.setuptools-git-versioning]
-enabled = true
-
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "ruff==0.11.6",
     "pyright==1.1.399",
@@ -64,6 +69,9 @@ reportMissingTypeStubs = false
 testpaths = "tests"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    "ignore:The event_loop fixture provided by pytest-asyncio has been redefined:DeprecationWarning",
+]
 
 [tool.ruff]
 # List of enabled rulsets.
@@ -122,6 +130,7 @@ line-length = 88
     "S311",   # Standard pseudo-random generators are not suitable for security/cryptographic purposes
     "D101",   # Missing docstring in public class
     "PLR2004", # Magic value used in comparison
+    "T201",  # Print statement found
 ]
 
 [tool.ruff.lint.pydocstyle]
