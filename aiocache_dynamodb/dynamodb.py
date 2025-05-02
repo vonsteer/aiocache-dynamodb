@@ -38,6 +38,8 @@ class DynamoDBBackend(BaseCache):
         value_column: str = constants.DEFAULT_VALUE_COLUMN,
         ttl_column: str = constants.DEFAULT_TTL_COLUMN,
         s3_bucket_column: str = constants.DEFAULT_S3_BUCKET_COLUMN,
+        dynamodb_client: DynamoDBClient | None = None,
+        s3_client: S3Client | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -52,8 +54,8 @@ class DynamoDBBackend(BaseCache):
         self.ttl_column = ttl_column
         self.s3_bucket_column = s3_bucket_column
         self._session = get_session()
-        self._dynamodb_client: DynamoDBClient | None = None
-        self._s3_client: S3Client | None = None
+        self._dynamodb_client: DynamoDBClient | None = dynamodb_client
+        self._s3_client: S3Client | None = s3_client
 
     @classmethod
     def _value_casting(
@@ -738,6 +740,16 @@ class DynamoDBCache(DynamoDBBackend):
         formatted key. Default is a lambda function that formats the key with the
         namespace.
     :type key_builder: callable, optional
+    :param dynamodb_client: The DynamoDB client to use. If not provided, a new client
+        will be created lazily on first call or on __aenter__. If provided, it should
+        be an instance of :class:`aiobotocore.client.AioBaseClient` that has been
+        initialized.
+    :type dynamodb_client: DynamoDBClient, optional
+    :param s3_client: The S3 client to use. If not provided, a new client
+        will be created lazily on first call or on __aenter__. If provided, it should
+        be an instance of :class:`aiobotocore.client.AioBaseClient` that has been
+        initialized.
+    :type s3_client: S3Client, optional
     :param kwargs: Additional keyword arguments to pass to the parent class.
     :type kwargs: dict, optional
     """
@@ -758,6 +770,8 @@ class DynamoDBCache(DynamoDBBackend):
         key_column: str = constants.DEFAULT_KEY_COLUMN,
         value_column: str = constants.DEFAULT_VALUE_COLUMN,
         ttl_column: str = constants.DEFAULT_TTL_COLUMN,
+        dynamodb_client: DynamoDBClient | None = None,
+        s3_client: S3Client | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -773,6 +787,8 @@ class DynamoDBCache(DynamoDBBackend):
             key_column=key_column,
             value_column=value_column,
             ttl_column=ttl_column,
+            dynamodb_client=dynamodb_client,
+            s3_client=s3_client,
             **kwargs,
         )
 
