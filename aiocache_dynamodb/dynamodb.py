@@ -245,6 +245,7 @@ class DynamoDBBackend(BaseCache):
 
         :param data: The item to retrieve the value from.
         :param encoding: The encoding to use for the value.
+        :param column: The column name to use (optional, defaults to value_column).
         :return: The string value of the item.
         """
         value = next(iter(data[column or self.value_column].values()))
