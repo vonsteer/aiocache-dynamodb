@@ -440,8 +440,8 @@ async def test_add(test_table: str, dynamodb_cache: DynamoDBCache) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ttl(test_table: str, dynamodb_cache: DynamoDBCache) -> None:
-    """Test the _ttl method to set a TTL for a key in the DynamoDB table."""
+async def test_set_ttl(test_table: str, dynamodb_cache: DynamoDBCache) -> None:
+    """Test the set method with ttl to set a TTL for a key in the DynamoDB table."""
     # Add an item with an initial value
     key = "item_with_ttl"
     initial_value = "item_value"
@@ -463,3 +463,55 @@ async def test_ttl(test_table: str, dynamodb_cache: DynamoDBCache) -> None:
     # While a normal get_item call will return the item,
     # the cache should return None as we use a condition expression
     assert await dynamodb_cache.get(key) is None
+
+
+@pytest.mark.asyncio
+async def test_ttl_with_ttl(test_table: str, dynamodb_cache: DynamoDBCache) -> None:
+    """Test the _ttl method to get a TTL for a key in the DynamoDB table."""
+    # Add an item with an initial value
+    key = "item_with_ttl"
+    initial_value = "item_value"
+
+    await dynamodb_cache.set(key, initial_value, ttl=2)
+    assert await dynamodb_cache.get(key) == initial_value
+    ttl = await dynamodb_cache._ttl(key)
+    assert ttl is not None
+    assert ttl > 0
+
+
+@pytest.mark.asyncio
+async def test_ttl_with_no_ttl(test_table: str, dynamodb_cache: DynamoDBCache) -> None:
+    """Test the _ttl method to get a TTL for a key with no ttl in the DynamoDB table."""
+    # Add an item with an initial value
+    key = "item_with_no_ttl"
+    initial_value = "item_value"
+
+    await dynamodb_cache.set(key, initial_value, ttl=None)
+    assert await dynamodb_cache.get(key) == initial_value
+    ttl = await dynamodb_cache._ttl(key)
+    assert ttl == -1  # -1 indicates no TTL set
+
+
+@pytest.mark.asyncio
+async def test_ttl_with_no_item(test_table: str, dynamodb_cache: DynamoDBCache) -> None:
+    """Test the _ttl method to get a TTL for a non-existent key in DynamoDB."""
+    assert await dynamodb_cache.get("non_existent_item") is None
+    ttl = await dynamodb_cache._ttl("non_existent_item")
+    assert ttl == -2  # -2 indicates no item found
+
+
+@pytest.mark.asyncio
+async def test_ttl_with_expired_item(
+    test_table: str,
+    dynamodb_cache: DynamoDBCache,
+) -> None:
+    """Test the _ttl method to get a TTL for an expired key in the DynamoDB table."""
+    key = "expired_item"
+    initial_value = "item_value"
+
+    await dynamodb_cache.set(key, initial_value, ttl=1)
+    assert await dynamodb_cache.get(key) == initial_value
+    await asyncio.sleep(2)  # Wait for the TTL to expire
+    assert await dynamodb_cache.get("expired_item") is None
+    ttl = await dynamodb_cache._ttl("expired_item")
+    assert ttl == -2  # -2 indicates no item found
