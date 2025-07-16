@@ -178,23 +178,16 @@ class DynamoDBBackend(BaseCache):
         if hasattr(self, "_dynamodb_client_context_creator"):
             await self._dynamodb_client_context_creator.__aexit__(None, None, None)
 
-    async def _get(
-        self,
-        key: str,
-        encoding: str | None = None,
-        _conn: None = None,
-    ) -> str | None:
-        """Retrieves an item from the DynamoDB table.
+    async def _get_query(self, key: str) -> dict[str, AttributeValueTypeDef]:
+        """Queries the DynamoDB table for a specific key and respects TTL.
 
-        This method uses the query mehtod to retrieve a single item
-        from the DynamoDB table. If the item does not exist,
-        None is returned. Respects the TTL of the item,
-        if it exists, even though DynamoDB doesn't.
+        This is an internal method that performs a query on the DynamoDB table
+        to retrieve an item by its key. It checks the TTL of the item and
+        returns the item if it exists and is not expired. If the item does not
+        exist or is expired, it returns an empty response.
 
         :param key: The key of the item to retrieve.
-        :param encoding: The encoding to use for the value.
-        :param _conn: The connection to use. (Not used)
-        :return: The value of the item.
+        :return: The response from the DynamoDB query.
         """
         dynamodb_client = await self.dynamodb_client
         current_time = int(datetime.now(tz=timezone.utc).timestamp())
@@ -216,13 +209,37 @@ class DynamoDBBackend(BaseCache):
                 },
             )
         if items := response.get("Items"):
-            return await self._retrieve_value(items[0], encoding)
+            return items[0]
+        return {}
+
+    async def _get(
+        self,
+        key: str,
+        encoding: str | None = None,
+        _conn: None = None,
+    ) -> str | None:
+        """Retrieves an item from the DynamoDB table.
+
+        This method uses the query mehtod to retrieve a single item
+        from the DynamoDB table. If the item does not exist,
+        None is returned. Respects the TTL of the item,
+        if it exists, even though DynamoDB doesn't.
+
+        :param key: The key of the item to retrieve.
+        :param encoding: The encoding to use for the value.
+        :param _conn: The connection to use. (Not used)
+        :return: The value of the item.
+        """
+        response = await self._get_query(key)
+        if response:
+            return await self._retrieve_value(response, encoding)
         return None
 
     async def _retrieve_value(
         self,
         data: dict[str, Any],
         encoding: str | None = None,
+        column: str | None = None,
     ) -> Any:
         """Retrieve the value from the DynamoDB response data.
 
@@ -230,9 +247,11 @@ class DynamoDBBackend(BaseCache):
         :param encoding: The encoding to use for the value.
         :return: The string value of the item.
         """
-        value = next(iter(data[self.value_column].values()))
+        value = next(iter(data[column or self.value_column].values()))
 
-        if bucket_name := data.get(self.s3_bucket_column, {}).get("S"):
+        if isinstance(value, str) and (
+            bucket_name := data.get(self.s3_bucket_column, {}).get("S")
+        ):
             s3_client = await self.s3_client
             if item := await s3_client.get_object(Bucket=bucket_name, Key=value):
                 value = await item["Body"].read()
@@ -690,6 +709,36 @@ class DynamoDBBackend(BaseCache):
             **payload,
         )
 
+    async def _ttl(self, key: str, _conn: None = None) -> int:
+        """Retrieves the TTL for an item in the DynamoDB table.
+
+        This method uses the get_item method to check if an item exists
+        in the DynamoDB table and returns the TTL behavior similar to Redis:
+        - Returns the TTL value in seconds if the item exists and has a TTL
+        - Returns -1 if the item exists but has no TTL
+        - Returns -2 if the item does not exist
+
+        :param key: The key of the item to check.
+        :param _conn: The connection to use. (Not used)
+        :return: TTL value if item exists with TTL, -1 if item exists but no TTL,
+                 -2 if item doesn't exist.
+        """
+        response = await self._get_query(key)
+        if response:
+            # Item exists, check if it has a TTL
+            if self.ttl_column in response and (
+                ttl_value := await self._retrieve_value(
+                    response,
+                    column=self.ttl_column,
+                )
+            ):
+                current_time = int(datetime.now(tz=timezone.utc).timestamp())
+                return int(ttl_value) - current_time
+            # Item exists but has no TTL
+            return -1
+        # Item does not exist
+        return -2
+
 
 class DynamoDBCache(DynamoDBBackend):
     """
@@ -792,7 +841,7 @@ class DynamoDBCache(DynamoDBBackend):
             **kwargs,
         )
 
-    def __repr__(self) -> str:
+    def __repr__(self) -> str:  # pragma: no cover
         if self.bucket_name:
             return "DynamoDBCache ({}:{}, bucket={})".format(
                 self._aws_region,
