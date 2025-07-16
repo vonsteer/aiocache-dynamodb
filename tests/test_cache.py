@@ -481,7 +481,7 @@ async def test_ttl_with_ttl(test_table: str, dynamodb_cache: DynamoDBCache) -> N
 
 @pytest.mark.asyncio
 async def test_ttl_with_no_ttl(test_table: str, dynamodb_cache: DynamoDBCache) -> None:
-    """Test the _ttl method to get a TTL for a key in the DynamoDB table."""
+    """Test the _ttl method to get a TTL for a key with no ttl in the DynamoDB table."""
     # Add an item with an initial value
     key = "item_with_no_ttl"
     initial_value = "item_value"
