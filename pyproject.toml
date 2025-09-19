@@ -34,7 +34,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "botocore~=1.37.1",
+    "botocore>=1.37.1",
     "aiobotocore>=2.21.1",
     "aiocache>=0.12.3"
 ]
